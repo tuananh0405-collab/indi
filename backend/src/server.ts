@@ -11,7 +11,8 @@ async function bootstrap(): Promise<void> {
   startTtlCleanupJob();
 
   // 3. Start Express server
-  app.listen(config.port, () => {
+  const host = config.nodeEnv === 'production' ? '0.0.0.0' : 'localhost';
+  app.listen(config.port, host, () => {
     console.log(`
 ╔══════════════════════════════════════════════╗
 ║   🎫 INDI Ticketing API                     ║
