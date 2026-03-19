@@ -4,6 +4,13 @@ import mongoose, { Schema, Model, Types } from 'mongoose';
 export const ORDER_STATUSES = ['PENDING', 'PAID', 'EXPIRED', 'CANCELLED'] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
+// ─── Order Item Interface ─────────────────────────────────────
+export interface IOrderItem {
+  ticketType: string;
+  quantity: number;
+  price: number;
+}
+
 // ─── Interface ────────────────────────────────────────────────
 export interface IOrder {
   _id: Types.ObjectId;
@@ -11,6 +18,7 @@ export interface IOrder {
   buyerName: string;
   buyerEmail: string;
   buyerPhone: string;
+  items: IOrderItem[];
   quantity: number;
   totalAmount: number;
   status: OrderStatus;
@@ -20,6 +28,27 @@ export interface IOrder {
   createdAt: Date;
   updatedAt: Date;
 }
+
+// ─── Order Item Sub-Schema ────────────────────────────────────
+const orderItemSchema = new Schema<IOrderItem>(
+  {
+    ticketType: {
+      type: String,
+      required: true,
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+    },
+    price: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  { _id: false }
+);
 
 // ─── Schema ───────────────────────────────────────────────────
 const orderSchema = new Schema<IOrder>(
@@ -48,6 +77,14 @@ const orderSchema = new Schema<IOrder>(
       required: true,
       trim: true,
       maxlength: 20,
+    },
+    items: {
+      type: [orderItemSchema],
+      required: true,
+      validate: {
+        validator: (v: IOrderItem[]) => v.length > 0,
+        message: 'Đơn hàng phải có ít nhất một loại vé.',
+      },
     },
     quantity: {
       type: Number,

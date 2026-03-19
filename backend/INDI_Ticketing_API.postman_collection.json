@@ -1,0 +1,455 @@
+{
+  "info": {
+    "name": "INDI Ticketing API",
+    "description": "Micro Event Ticketing System — 400 attendee capacity\n\n## Auth Flow\n1. Admin signs in via Google → `POST /api/auth/google`\n2. Use the returned JWT as `Bearer {{admin_token}}` for all Admin/Check-in APIs.\n\n## Buyer Flow\n1. Create order → `POST /api/orders` (no auth)\n2. Redirect buyer to `paymentLink`\n3. Poll status → `GET /api/orders/:orderCode/status`\n4. PayOS sends webhook → tickets activated → email sent",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000", "type": "string" },
+    { "key": "admin_token", "value": "", "type": "string" },
+    { "key": "order_code", "value": "", "type": "string" },
+    { "key": "ticket_id", "value": "", "type": "string" },
+    { "key": "ticket_uuid", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "🔐 Auth",
+      "item": [
+        {
+          "name": "Google Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/auth/google",
+              "host": ["{{base_url}}"],
+              "path": ["api", "auth", "google"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"PASTE_GOOGLE_ID_TOKEN_HERE\"\n}"
+            },
+            "description": "Send the Google idToken from frontend 'Sign in with Google' flow.\nReturns an internal JWT if the email is in the ADMIN_EMAILS whitelist."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const data = pm.response.json();",
+                  "    pm.collectionVariables.set('admin_token', data.data.token);",
+                  "    console.log('✅ Admin token saved to collection variables');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 — Success",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"token\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"admin\": {\n      \"email\": \"admin@gmail.com\",\n      \"name\": \"Admin User\",\n      \"picture\": \"https://lh3.googleusercontent.com/...\"\n    }\n  }\n}"
+            },
+            {
+              "name": "403 — Not Authorized",
+              "status": "Forbidden",
+              "code": 403,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": false,\n  \"error\": {\n    \"code\": \"NOT_AUTHORIZED\",\n    \"message\": \"Email này không có quyền truy cập Admin. Liên hệ Ban Tổ Chức.\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🎫 Orders (Buyer)",
+      "item": [
+        {
+          "name": "Create Order (Booking)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/orders",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Nguyen Van A\",\n  \"buyerEmail\": \"vana@gmail.com\",\n  \"buyerPhone\": \"0901234567\",\n  \"quantity\": 2,\n  \"ticketPrice\": 150000\n}"
+            },
+            "description": "Create a new booking. No authentication required.\nAtomically reserves ticket capacity, creates Order (PENDING) + Tickets (HOLDING), and returns a PayOS payment link."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const data = pm.response.json();",
+                  "    pm.collectionVariables.set('order_code', data.data.orderCode);",
+                  "    console.log('✅ orderCode saved:', data.data.orderCode);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "201 — Created",
+              "status": "Created",
+              "code": 201,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"orderCode\": 1710680400123,\n    \"quantity\": 2,\n    \"totalAmount\": 300000,\n    \"status\": \"PENDING\",\n    \"paymentLink\": \"https://pay.payos.vn/web/abc123xyz\",\n    \"expiresAt\": \"2026-03-17T19:36:36.000Z\"\n  }\n}"
+            },
+            {
+              "name": "409 — Sold Out",
+              "status": "Conflict",
+              "code": 409,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": false,\n  \"error\": {\n    \"code\": \"CAPACITY_EXCEEDED\",\n    \"message\": \"Không đủ vé. Chỉ còn lại 3 vé.\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Order Status (Polling)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/orders/{{order_code}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "orders", "{{order_code}}", "status"]
+            },
+            "description": "Buyer polls to check if payment has been confirmed.\nStatus transitions: PENDING → PAID (webhook) or PENDING → EXPIRED (10 min TTL)."
+          },
+          "response": [
+            {
+              "name": "200 — Pending",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"orderCode\": 1710680400123,\n    \"status\": \"PENDING\",\n    \"quantity\": 2,\n    \"totalAmount\": 300000,\n    \"paymentLink\": \"https://pay.payos.vn/web/abc123xyz\",\n    \"expiresAt\": \"2026-03-17T19:36:36.000Z\",\n    \"paidAt\": null\n  }\n}"
+            },
+            {
+              "name": "200 — Paid",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"orderCode\": 1710680400123,\n    \"status\": \"PAID\",\n    \"quantity\": 2,\n    \"totalAmount\": 300000,\n    \"paymentLink\": \"https://pay.payos.vn/web/abc123xyz\",\n    \"expiresAt\": \"2026-03-17T19:36:36.000Z\",\n    \"paidAt\": \"2026-03-17T19:30:00.000Z\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "💳 Webhooks",
+      "item": [
+        {
+          "name": "PayOS Payment Webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/payos",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "payos"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"00\",\n  \"desc\": \"success\",\n  \"success\": true,\n  \"data\": {\n    \"orderCode\": 1710680400123,\n    \"amount\": 300000,\n    \"description\": \"INDI 1710680400123\",\n    \"accountNumber\": \"123456789\",\n    \"reference\": \"TXN123456\",\n    \"transactionDateTime\": \"2026-03-17 19:30:00\",\n    \"paymentLinkId\": \"abc123xyz\",\n    \"code\": \"00\",\n    \"desc\": \"success\"\n  },\n  \"signature\": \"CHECKSUM_FROM_PAYOS\"\n}"
+            },
+            "description": "⚠️ This endpoint is called BY PayOS, not by the frontend.\nIncluded here for testing/debugging.\n\nThe backend verifies the checksum, idempotently updates the order PENDING → PAID, activates tickets, and triggers fulfillment (QR + email).\n\nAlways returns 200."
+          },
+          "response": [
+            {
+              "name": "200 — Acknowledged",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "📱 Check-in (Staff)",
+      "item": [
+        {
+          "name": "QR Check-in",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/checkin",
+              "host": ["{{base_url}}"],
+              "path": ["api", "checkin"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uuid\": \"{{ticket_uuid}}\"\n}"
+            },
+            "description": "Staff scans QR code → sends UUID → backend validates and marks as checked in."
+          },
+          "response": [
+            {
+              "name": "200 — Check-in Success",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"ticketId\": \"65f1a2b3c4d5e6f7a8b9c0d1\",\n    \"uuid\": \"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n    \"buyerName\": \"Nguyen Van A\",\n    \"buyerEmail\": \"vana@gmail.com\",\n    \"buyerPhone\": \"0901234567\",\n    \"status\": \"ACTIVE\",\n    \"checkedIn\": true,\n    \"checkedInAt\": \"2026-03-17T19:35:00.000Z\",\n    \"message\": \"Check-in thành công! 🎉\"\n  }\n}"
+            },
+            {
+              "name": "409 — Already Checked In",
+              "status": "Conflict",
+              "code": 409,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": false,\n  \"error\": {\n    \"code\": \"ALREADY_CHECKED_IN\",\n    \"message\": \"Vé này đã được check-in lúc 19:30:00 17/03/2026.\"\n  }\n}"
+            },
+            {
+              "name": "404 — Ticket Not Found",
+              "status": "Not Found",
+              "code": 404,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": false,\n  \"error\": {\n    \"code\": \"TICKET_NOT_FOUND\",\n    \"message\": \"Không tìm thấy vé với mã QR này.\"\n  }\n}"
+            },
+            {
+              "name": "403 — Ticket Inactive",
+              "status": "Forbidden",
+              "code": 403,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": false,\n  \"error\": {\n    \"code\": \"TICKET_INACTIVE\",\n    \"message\": \"Vé đã bị vô hiệu hóa. Liên hệ Ban Tổ Chức.\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "🛡️ Admin",
+      "item": [
+        {
+          "name": "List & Search Tickets",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/tickets?search=&status=&page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "tickets"],
+              "query": [
+                { "key": "search", "value": "", "description": "Search by email, name, phone, UUID, or orderCode" },
+                { "key": "status", "value": "", "description": "Filter: ACTIVE, INACTIVE, HOLDING, EXPIRED" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "List all tickets with optional search and status filter. Supports pagination."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const data = pm.response.json();",
+                  "    if (data.data.tickets.length > 0) {",
+                  "        const t = data.data.tickets[0];",
+                  "        pm.collectionVariables.set('ticket_id', t._id);",
+                  "        pm.collectionVariables.set('ticket_uuid', t.uuid);",
+                  "        console.log('✅ ticket_id & ticket_uuid saved from first result');",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": [
+            {
+              "name": "200 — Success",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"tickets\": [\n      {\n        \"_id\": \"65f1a2b3c4d5e6f7a8b9c0d1\",\n        \"uuid\": \"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n        \"orderCode\": 1710680400123,\n        \"buyerName\": \"Nguyen Van A\",\n        \"buyerEmail\": \"vana@gmail.com\",\n        \"buyerPhone\": \"0901234567\",\n        \"status\": \"ACTIVE\",\n        \"checkedIn\": false,\n        \"emailSent\": true,\n        \"createdAt\": \"2026-03-17T19:26:36.000Z\"\n      }\n    ],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 20,\n      \"total\": 1,\n      \"totalPages\": 1\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Update Buyer Info",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/tickets/{{ticket_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "tickets", "{{ticket_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Tran Van B\",\n  \"buyerEmail\": \"vanb@gmail.com\",\n  \"buyerPhone\": \"0909876543\"\n}"
+            },
+            "description": "Update buyer information on a ticket. All fields are optional — only provide the fields to update."
+          },
+          "response": [
+            {
+              "name": "200 — Updated",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"ticket\": {\n      \"_id\": \"65f1a2b3c4d5e6f7a8b9c0d1\",\n      \"uuid\": \"f47ac10b-58cc-4372-a567-0e02b2c3d479\",\n      \"buyerName\": \"Tran Van B\",\n      \"buyerEmail\": \"vanb@gmail.com\",\n      \"buyerPhone\": \"0909876543\",\n      \"status\": \"ACTIVE\"\n    }\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Toggle Active/Inactive",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/tickets/{{ticket_id}}/toggle-status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "tickets", "{{ticket_id}}", "toggle-status"]
+            },
+            "description": "Toggles ticket status between ACTIVE ↔ INACTIVE. Cannot toggle HOLDING or EXPIRED tickets."
+          },
+          "response": [
+            {
+              "name": "200 — Toggled to Inactive",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"ticket\": {\n      \"_id\": \"65f1a2b3c4d5e6f7a8b9c0d1\",\n      \"status\": \"INACTIVE\"\n    },\n    \"message\": \"Vé đã bị vô hiệu hóa.\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Resend Ticket Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/tickets/{{ticket_id}}/resend-email",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "tickets", "{{ticket_id}}", "resend-email"]
+            },
+            "description": "Manually re-generates the QR code in-memory and resends the ticket email."
+          },
+          "response": [
+            {
+              "name": "200 — Email Sent",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"message\": \"Email đã được gửi lại thành công.\",\n    \"sentTo\": \"vana@gmail.com\"\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "dashboard"]
+            },
+            "description": "Returns real-time stats: capacity, sold, available, pending, checked-in, active, inactive, holding."
+          },
+          "response": [
+            {
+              "name": "200 — Stats",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"capacity\": 400,\n    \"sold\": 150,\n    \"available\": 250,\n    \"pending\": 5,\n    \"checkedIn\": 42,\n    \"activeTickets\": 145,\n    \"inactiveTickets\": 0,\n    \"holdingTickets\": 5\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Export CSV",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/admin/export?status=",
+              "host": ["{{base_url}}"],
+              "path": ["api", "admin", "export"],
+              "query": [
+                { "key": "status", "value": "", "description": "Optional: ACTIVE, INACTIVE, etc." }
+              ]
+            },
+            "description": "Downloads a CSV file of tickets. Optional status filter.\nThe CSV includes a UTF-8 BOM for Excel compatibility."
+          },
+          "response": [
+            {
+              "name": "200 — CSV File",
+              "status": "OK",
+              "code": 200,
+              "header": [
+                { "key": "Content-Type", "value": "text/csv; charset=utf-8" },
+                { "key": "Content-Disposition", "value": "attachment; filename=tickets_export_20260317.csv" }
+              ],
+              "body": "STT,UUID,Order Code,Buyer Name,Email,Phone,Status,Checked In,Checked In At,Created At\n1,f47ac10b-58cc-4372-a567-0e02b2c3d479,1710680400123,Nguyen Van A,vana@gmail.com,0901234567,ACTIVE,No,,17/03/2026 19:26:36"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "❤️ Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Simple health check. Returns uptime and timestamp."
+          },
+          "response": [
+            {
+              "name": "200 — Healthy",
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"status\": \"ok\",\n    \"timestamp\": \"2026-03-17T19:26:36.000Z\",\n    \"uptime\": 123.456\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

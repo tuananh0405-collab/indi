@@ -1,12 +1,16 @@
 import app from './app';
 import config from './config';
 import { connectDatabase } from './config/database';
+import { startTtlCleanupJob } from './jobs/ttlCleanup';
 
 async function bootstrap(): Promise<void> {
   // 1. Connect to MongoDB
   await connectDatabase();
 
-  // 2. Start Express server
+  // 2. Start TTL cleanup job (expires unpaid orders every 60s)
+  startTtlCleanupJob();
+
+  // 3. Start Express server
   app.listen(config.port, () => {
     console.log(`
 ╔══════════════════════════════════════════════╗

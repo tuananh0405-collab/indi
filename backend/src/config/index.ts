@@ -8,7 +8,13 @@ interface Config {
   port: number;
   nodeEnv: string;
   mongodbUri: string;
-  adminApiKey: string;
+
+  // Admin Auth (Google OAuth2 → JWT)
+  googleClientId: string;
+  jwtSecret: string;
+  jwtExpiresIn: string;
+  adminEmails: string[];
+
   payos: {
     clientId: string;
     apiKey: string;
@@ -39,7 +45,16 @@ const config: Config = {
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
   mongodbUri: requireEnv('MONGODB_URI'),
-  adminApiKey: requireEnv('ADMIN_API_KEY'),
+
+  // Admin Auth
+  googleClientId: requireEnv('GOOGLE_CLIENT_ID'),
+  jwtSecret: requireEnv('JWT_SECRET'),
+  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
+  adminEmails: requireEnv('ADMIN_EMAILS')
+    .split(',')
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean),
+
   payos: {
     clientId: requireEnv('PAYOS_CLIENT_ID'),
     apiKey: requireEnv('PAYOS_API_KEY'),
