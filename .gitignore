@@ -33,3 +33,9 @@ coverage/
 
 # Misc
 *.tsbuildinfo
+
+# SQLite database
+backend/data/
+*.db
+*.db-wal
+*.db-shm

@@ -1,0 +1,442 @@
+{
+  "info": {
+    "name": "INDI Ticketing API (SQLite)",
+    "description": "Complete API collection for the INDI ticketing system after SQLite migration.\n\n**Setup:**\n1. Set `baseUrl` variable to your backend URL (default: http://localhost:3000)\n2. Set `adminToken` after authenticating via Google OAuth\n3. Run requests in order within each folder for flow testing",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "adminToken", "value": "", "type": "string" },
+    { "key": "orderCode", "value": "", "type": "string" },
+    { "key": "ticketId", "value": "", "type": "string" },
+    { "key": "ticketUuid", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "🏥 Health Check",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🎫 Public — Ticket Types",
+      "item": [
+        {
+          "name": "Get Ticket Types",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Returns ticket types', function () {",
+                  "  var json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "  pm.expect(json.data.ticketTypes).to.be.an('array');",
+                  "  pm.expect(json.data.ticketTypes.length).to.be.greaterThan(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/ticket-types", "host": ["{{baseUrl}}"], "path": ["api", "ticket-types"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📦 Public — Orders",
+      "item": [
+        {
+          "name": "1. Create Order (Standard × 2)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Order created', function () {",
+                  "  var json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "  pm.expect(json.data.orderCode).to.be.a('number');",
+                  "  pm.collectionVariables.set('orderCode', json.data.orderCode);",
+                  "  console.log('Order Code:', json.data.orderCode);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Nguyễn Văn Test\",\n  \"buyerEmail\": \"test@example.com\",\n  \"buyerPhone\": \"0901234567\",\n  \"items\": [\n    { \"ticketTypeId\": 2, \"quantity\": 2 }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/orders", "host": ["{{baseUrl}}"], "path": ["api", "orders"] }
+          }
+        },
+        {
+          "name": "2. Create Order (Early Bird × 1 + VIP × 1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.success) {",
+                  "  pm.collectionVariables.set('orderCode', json.data.orderCode);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Trần Thị Multi\",\n  \"buyerEmail\": \"multi@example.com\",\n  \"buyerPhone\": \"0912345678\",\n  \"items\": [\n    { \"ticketTypeId\": 1, \"quantity\": 1 },\n    { \"ticketTypeId\": 3, \"quantity\": 1 }\n  ]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/orders", "host": ["{{baseUrl}}"], "path": ["api", "orders"] }
+          }
+        },
+        {
+          "name": "3. Get Order Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/orders/{{orderCode}}/status", "host": ["{{baseUrl}}"], "path": ["api", "orders", "{{orderCode}}", "status"] }
+          }
+        },
+        {
+          "name": "4. [DEV] Confirm Payment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Order confirmed as PAID', function () {",
+                  "  var json = pm.response.json();",
+                  "  pm.expect(json.success).to.be.true;",
+                  "  pm.expect(json.data.status).to.equal('PAID');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/orders/{{orderCode}}/dev-confirm", "host": ["{{baseUrl}}"], "path": ["api", "orders", "{{orderCode}}", "dev-confirm"] }
+          }
+        },
+        {
+          "name": "5. Get Order Status (After Payment)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/orders/{{orderCode}}/status", "host": ["{{baseUrl}}"], "path": ["api", "orders", "{{orderCode}}", "status"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "❌ Validation Errors",
+      "item": [
+        {
+          "name": "Create Order — Missing name",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerEmail\": \"test@example.com\",\n  \"buyerPhone\": \"0901234567\",\n  \"items\": [{ \"ticketTypeId\": 2, \"quantity\": 1 }]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/orders", "host": ["{{baseUrl}}"], "path": ["api", "orders"] }
+          }
+        },
+        {
+          "name": "Create Order — Empty items",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Test\",\n  \"buyerEmail\": \"test@example.com\",\n  \"buyerPhone\": \"0901234567\",\n  \"items\": []\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/orders", "host": ["{{baseUrl}}"], "path": ["api", "orders"] }
+          }
+        },
+        {
+          "name": "Create Order — Qty > 5",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Test\",\n  \"buyerEmail\": \"test@example.com\",\n  \"buyerPhone\": \"0901234567\",\n  \"items\": [{ \"ticketTypeId\": 2, \"quantity\": 6 }]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/orders", "host": ["{{baseUrl}}"], "path": ["api", "orders"] }
+          }
+        },
+        {
+          "name": "Create Order — Invalid ticketTypeId",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Test\",\n  \"buyerEmail\": \"test@example.com\",\n  \"buyerPhone\": \"0901234567\",\n  \"items\": [{ \"ticketTypeId\": 999, \"quantity\": 1 }]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/orders", "host": ["{{baseUrl}}"], "path": ["api", "orders"] }
+          }
+        },
+        {
+          "name": "Get Order Status — Invalid code",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/orders/999999/status", "host": ["{{baseUrl}}"], "path": ["api", "orders", "999999", "status"] }
+          }
+        },
+        {
+          "name": "Dev Confirm — Already paid",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}/api/orders/{{orderCode}}/dev-confirm", "host": ["{{baseUrl}}"], "path": ["api", "orders", "{{orderCode}}", "dev-confirm"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🔐 Auth",
+      "item": [
+        {
+          "name": "Google Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.success && json.data.token) {",
+                  "  pm.collectionVariables.set('adminToken', json.data.token);",
+                  "  console.log('Token saved!');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"idToken\": \"<paste_google_id_token_here>\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/auth/google", "host": ["{{baseUrl}}"], "path": ["api", "auth", "google"] },
+            "description": "Get the Google idToken from the frontend login flow, then paste it here."
+          }
+        }
+      ]
+    },
+    {
+      "name": "🛡️ Admin — Dashboard",
+      "item": [
+        {
+          "name": "Get Dashboard Stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/dashboard", "host": ["{{baseUrl}}"], "path": ["api", "admin", "dashboard"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🛡️ Admin — Tickets",
+      "item": [
+        {
+          "name": "List Tickets (default)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var json = pm.response.json();",
+                  "if (json.success && json.data.tickets.length > 0) {",
+                  "  var t = json.data.tickets[0];",
+                  "  pm.collectionVariables.set('ticketId', t.id);",
+                  "  pm.collectionVariables.set('ticketUuid', t.uuid);",
+                  "  console.log('Ticket ID:', t.id, 'UUID:', t.uuid);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets?page=1&limit=10", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets"], "query": [{ "key": "page", "value": "1" }, { "key": "limit", "value": "10" }] }
+          }
+        },
+        {
+          "name": "List Tickets (search by name)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets?search=Test", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets"], "query": [{ "key": "search", "value": "Test" }] }
+          }
+        },
+        {
+          "name": "List Tickets (filter by status)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets?status=ACTIVE", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets"], "query": [{ "key": "status", "value": "ACTIVE" }] }
+          }
+        },
+        {
+          "name": "List Tickets (filter by ticketType)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets?ticketType=VIP", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets"], "query": [{ "key": "ticketType", "value": "VIP" }] }
+          }
+        },
+        {
+          "name": "Edit Ticket Info",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"buyerName\": \"Nguyễn Văn Updated\",\n  \"notes\": \"VIP guest — reserved seating\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets/{{ticketId}}", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets", "{{ticketId}}"] }
+          }
+        },
+        {
+          "name": "Toggle Ticket Status (Active ↔ Inactive)",
+          "request": {
+            "method": "PATCH",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets/{{ticketId}}/toggle-status", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets", "{{ticketId}}", "toggle-status"] }
+          }
+        },
+        {
+          "name": "Resend Ticket Email",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/tickets/{{ticketId}}/resend-email", "host": ["{{baseUrl}}"], "path": ["api", "admin", "tickets", "{{ticketId}}", "resend-email"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🛡️ Admin — Export",
+      "item": [
+        {
+          "name": "Export All Tickets (Excel)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/export", "host": ["{{baseUrl}}"], "path": ["api", "admin", "export"] },
+            "description": "Downloads .xlsx file. Save response to file in Postman."
+          }
+        },
+        {
+          "name": "Export Active Tickets Only",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/api/admin/export?status=ACTIVE", "host": ["{{baseUrl}}"], "path": ["api", "admin", "export"], "query": [{ "key": "status", "value": "ACTIVE" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "📱 Admin — Check-in",
+      "item": [
+        {
+          "name": "Check-in by UUID",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uuid\": \"{{ticketUuid}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/checkin", "host": ["{{baseUrl}}"], "path": ["api", "checkin"] }
+          }
+        },
+        {
+          "name": "Check-in — Already checked in",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uuid\": \"{{ticketUuid}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/checkin", "host": ["{{baseUrl}}"], "path": ["api", "checkin"] }
+          }
+        },
+        {
+          "name": "Check-in — Invalid UUID",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"uuid\": \"non-existent-uuid-12345\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/api/checkin", "host": ["{{baseUrl}}"], "path": ["api", "checkin"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "🪝 Webhooks",
+      "item": [
+        {
+          "name": "PayOS Webhook (simulated)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"00\",\n  \"desc\": \"Thành công\",\n  \"data\": {\n    \"orderCode\": {{orderCode}},\n    \"amount\": 500000,\n    \"description\": \"INDI Ticket\",\n    \"accountNumber\": \"0901234567\",\n    \"reference\": \"FT123456\",\n    \"transactionDateTime\": \"2026-03-25 23:00:00\",\n    \"currency\": \"VND\",\n    \"paymentLinkId\": \"test-link-id\",\n    \"code\": \"00\",\n    \"desc\": \"Thành công\",\n    \"counterAccountBankId\": \"\",\n    \"counterAccountBankName\": \"\",\n    \"counterAccountName\": \"\",\n    \"counterAccountNumber\": \"\",\n    \"virtualAccountName\": \"\",\n    \"virtualAccountNumber\": \"\"\n  },\n  \"signature\": \"<needs_valid_signature>\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/api/webhooks/payos", "host": ["{{baseUrl}}"], "path": ["api", "webhooks", "payos"] },
+            "description": "Note: This will fail signature verification unless you use a valid PayOS signature. Use the dev-confirm endpoint for testing instead."
+          }
+        }
+      ]
+    }
+  ]
+}

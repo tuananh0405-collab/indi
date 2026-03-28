@@ -7,7 +7,6 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 interface Config {
   port: number;
   nodeEnv: string;
-  mongodbUri: string;
 
   // Admin Auth (Google OAuth2 → JWT)
   googleClientId: string;
@@ -44,7 +43,6 @@ function requireEnv(key: string): string {
 const config: Config = {
   port: parseInt(process.env.PORT || '3000', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
-  mongodbUri: requireEnv('MONGODB_URI'),
 
   // Admin Auth
   googleClientId: requireEnv('GOOGLE_CLIENT_ID'),

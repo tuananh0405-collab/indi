@@ -19,7 +19,7 @@ export function errorHandler(
     return;
   }
 
-  // Mongoose validation error
+  // Validation error
   if (err.name === 'ValidationError') {
     res.status(400).json({
       success: false,

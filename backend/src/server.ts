@@ -3,9 +3,9 @@ import config from './config';
 import { connectDatabase } from './config/database';
 import { startTtlCleanupJob } from './jobs/ttlCleanup';
 
-async function bootstrap(): Promise<void> {
-  // 1. Connect to MongoDB
-  await connectDatabase();
+function bootstrap(): void {
+  // 1. Initialize SQLite database
+  connectDatabase();
 
   // 2. Start TTL cleanup job (expires unpaid orders every 60s)
   startTtlCleanupJob();
@@ -18,13 +18,11 @@ async function bootstrap(): Promise<void> {
 ║   🎫 INDI Ticketing API                     ║
 ║   Environment : ${config.nodeEnv.padEnd(28)}║
 ║   Port        : ${String(config.port).padEnd(28)}║
+║   Database    : SQLite (WAL mode)            ║
 ║   Health      : http://localhost:${config.port}/health   ║
 ╚══════════════════════════════════════════════╝
     `);
   });
 }
 
-bootstrap().catch((err) => {
-  console.error('❌ Failed to start server:', err);
-  process.exit(1);
-});
+bootstrap();

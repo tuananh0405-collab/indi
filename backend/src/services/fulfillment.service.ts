@@ -1,6 +1,6 @@
 import QRCode from 'qrcode';
-import mongoose from 'mongoose';
-import Ticket from '../models/Ticket';
+import { eq, and, inArray, sql as dsql } from 'drizzle-orm';
+import { db, tickets } from '../db';
 import { sendTicketEmail } from './email.service';
 
 /**
@@ -8,26 +8,25 @@ import { sendTicketEmail } from './email.service';
  * - For each ticket in the order, generates a QR code in-memory
  * - Sends ticket confirmation email with embedded QR
  * - Updates ticket emailSent flags
- *
- * This function is called asynchronously after a webhook confirms payment.
- * Errors are logged but do NOT affect the webhook response.
  */
-export async function fulfillOrder(orderId: mongoose.Types.ObjectId): Promise<void> {
-  const tickets = await Ticket.find({ orderId, status: 'ACTIVE' });
+export async function fulfillOrder(orderId: number): Promise<void> {
+  const orderTickets = db.select().from(tickets)
+    .where(and(eq(tickets.orderId, orderId), eq(tickets.status, 'ACTIVE')))
+    .all();
 
-  if (tickets.length === 0) {
+  if (orderTickets.length === 0) {
     console.warn(`⚠️  fulfillOrder: No ACTIVE tickets found for order ${orderId}`);
     return;
   }
 
-  const totalTickets = tickets.length;
+  const totalTickets = orderTickets.length;
 
-  for (let i = 0; i < tickets.length; i++) {
-    const ticket = tickets[i];
+  for (let i = 0; i < orderTickets.length; i++) {
+    const ticket = orderTickets[i];
     const ticketIndex = i + 1;
 
     try {
-      // 1. Generate QR code as PNG buffer (in-memory, NOT stored in DB)
+      // 1. Generate QR code as PNG buffer
       const qrBuffer = await QRCode.toBuffer(ticket.uuid, {
         type: 'png',
         width: 400,
@@ -51,32 +50,37 @@ export async function fulfillOrder(orderId: mongoose.Types.ObjectId): Promise<vo
       );
 
       // 3. Mark email as sent
-      await Ticket.updateOne(
-        { _id: ticket._id },
-        { emailSent: true, emailSentAt: new Date() }
-      );
+      db.update(tickets)
+        .set({ emailSent: true, emailSentAt: new Date().toISOString() })
+        .where(eq(tickets.id, ticket.id))
+        .run();
 
       console.log(`📧 Ticket email sent: ${ticket.uuid} → ${ticket.buyerEmail} (${ticketIndex}/${totalTickets})`);
     } catch (err) {
       console.error(`❌ Failed to fulfill ticket ${ticket.uuid}:`, err);
-      // Continue with the next ticket — don't fail the whole batch
     }
   }
 }
 
 /**
  * Re-send the ticket email for a single ticket.
- * Used by the admin "resend email" API.
  */
-export async function resendTicketEmail(ticketId: mongoose.Types.ObjectId): Promise<void> {
-  const ticket = await Ticket.findById(ticketId);
+export async function resendTicketEmail(ticketId: number): Promise<void> {
+  const ticket = db.select().from(tickets).where(eq(tickets.id, ticketId)).get();
 
   if (!ticket) {
     throw new Error(`Ticket not found: ${ticketId}`);
   }
 
-  // Find sibling count for "X of Y" display
-  const siblingCount = await Ticket.countDocuments({ orderId: ticket.orderId, status: { $in: ['ACTIVE', 'INACTIVE'] } });
+  // Find sibling count
+  const siblingResult = db.select({ count: dsql<number>`COUNT(*)` })
+    .from(tickets)
+    .where(and(
+      eq(tickets.orderId, ticket.orderId),
+      inArray(tickets.status, ['ACTIVE', 'INACTIVE'])
+    ))
+    .get();
+  const siblingCount = siblingResult?.count ?? 1;
 
   // Generate QR code fresh
   const qrBuffer = await QRCode.toBuffer(ticket.uuid, {
@@ -96,12 +100,12 @@ export async function resendTicketEmail(ticketId: mongoose.Types.ObjectId): Prom
     ticket.uuid,
     ticket.orderCode,
     qrBuffer,
-    1, // re-send always shows as ticket 1
+    1,
     siblingCount
   );
 
-  await Ticket.updateOne(
-    { _id: ticket._id },
-    { emailSent: true, emailSentAt: new Date() }
-  );
+  db.update(tickets)
+    .set({ emailSent: true, emailSentAt: new Date().toISOString() })
+    .where(eq(tickets.id, ticket.id))
+    .run();
 }

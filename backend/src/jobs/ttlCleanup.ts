@@ -1,6 +1,5 @@
-import Counter from '../models/Counter';
-import Order from '../models/Order';
-import Ticket from '../models/Ticket';
+import { eq, and, lt, sql } from 'drizzle-orm';
+import { db, sqlite, orders, tickets, orderItems, ticketTypes } from '../db';
 import config from '../config';
 import payos from '../services/payos.service';
 
@@ -8,58 +7,65 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Finds PENDING orders older than the TTL cutoff, expires them,
- * releases capacity back to the Counter, and cancels PayOS payment links.
- *
- * Each order is guarded with a status: 'PENDING' filter in the
- * findOneAndUpdate call to prevent race conditions.
+ * releases per-type capacity back, and cancels PayOS payment links.
  */
-async function cleanupExpiredOrders(): Promise<void> {
-  const cutoff = new Date(Date.now() - config.orderTtlMinutes * 60 * 1000);
+function cleanupExpiredOrders(): void {
+  // SQLite datetime('now') uses format: "YYYY-MM-DD HH:MM:SS" (no T, no Z)
+  // We must match this format for string comparison to work correctly
+  const cutoffDate = new Date(Date.now() - config.orderTtlMinutes * 60 * 1000);
+  const cutoff = cutoffDate.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, '');
 
-  const expiredOrders = await Order.find({
-    status: 'PENDING',
-    createdAt: { $lt: cutoff },
-  });
+  const expiredOrders = db.select()
+    .from(orders)
+    .where(and(eq(orders.status, 'PENDING'), lt(orders.createdAt, cutoff)))
+    .all();
 
   if (expiredOrders.length === 0) return;
 
   console.log(`🧹 TTL Cleanup: found ${expiredOrders.length} expired order(s)`);
 
   for (const order of expiredOrders) {
-    // Atomic guard: only expire if still PENDING (prevents race with webhook)
-    const updated = await Order.findOneAndUpdate(
-      { _id: order._id, status: 'PENDING' },
-      { status: 'EXPIRED' },
-      { new: true }
-    );
+    // Use transaction for atomicity
+    const wasExpired = sqlite.transaction(() => {
+      // Atomic guard: only expire if still PENDING
+      const updated = db.update(orders)
+        .set({ status: 'EXPIRED', updatedAt: new Date().toISOString() })
+        .where(and(eq(orders.id, order.id), eq(orders.status, 'PENDING')))
+        .returning()
+        .get();
 
-    if (!updated) {
-      // Order was already processed (e.g. webhook arrived just in time)
-      continue;
-    }
+      if (!updated) return false; // Already processed
 
-    // Release capacity back to pool
-    await Counter.findOneAndUpdate(
-      { _id: 'ticket_capacity' },
-      { $inc: { sold: -updated.quantity } }
-    );
+      // Release per-type capacity
+      const items = db.select().from(orderItems).where(eq(orderItems.orderId, order.id)).all();
+      for (const item of items) {
+        sqlite.prepare('UPDATE ticket_types SET sold = MAX(0, sold - ?) WHERE id = ?')
+          .run(item.quantity, item.ticketTypeId);
+      }
 
-    // Expire holding tickets
-    await Ticket.updateMany(
-      { orderId: updated._id, status: 'HOLDING' },
-      { status: 'EXPIRED' }
-    );
+      // Expire holding tickets
+      sqlite.prepare(`
+        UPDATE tickets SET status = 'EXPIRED', updated_at = datetime('now')
+        WHERE order_id = ? AND status = 'HOLDING'
+      `).run(order.id);
 
-    // Cancel PayOS payment link (best-effort, don't throw on failure)
+      return true;
+    })();
+
+    if (!wasExpired) continue;
+
+    // Cancel PayOS payment link (best-effort, outside transaction)
     try {
-      if (updated.paymentLinkId && !updated.paymentLinkId.startsWith('mock-')) {
-        await payos.cancelPaymentLink(updated.orderCode);
+      if (order.paymentLinkId && !order.paymentLinkId.startsWith('mock-')) {
+        payos.cancelPaymentLink(order.orderCode).catch((err: Error) => {
+          console.warn(`⚠️  Failed to cancel PayOS link for order ${order.orderCode}:`, err);
+        });
       }
     } catch (err) {
-      console.warn(`⚠️  Failed to cancel PayOS link for order ${updated.orderCode}:`, err);
+      console.warn(`⚠️  Failed to cancel PayOS link for order ${order.orderCode}:`, err);
     }
 
-    console.log(`🧹 Order ${updated.orderCode} expired → ${updated.quantity} ticket(s) released`);
+    console.log(`🧹 Order ${order.orderCode} expired → capacity released`);
   }
 }
 
@@ -70,20 +76,24 @@ async function cleanupExpiredOrders(): Promise<void> {
 export function startTtlCleanupJob(): void {
   console.log(`⏰ TTL Cleanup job started (every 60s, TTL: ${config.orderTtlMinutes} min)`);
 
-  // Run immediately on startup to catch any orders that expired while server was down
-  cleanupExpiredOrders().catch((err) => {
+  // Run immediately on startup
+  try {
+    cleanupExpiredOrders();
+  } catch (err) {
     console.error('❌ TTL Cleanup error:', err);
-  });
+  }
 
   intervalId = setInterval(() => {
-    cleanupExpiredOrders().catch((err) => {
+    try {
+      cleanupExpiredOrders();
+    } catch (err) {
       console.error('❌ TTL Cleanup error:', err);
-    });
+    }
   }, 60 * 1000);
 }
 
 /**
- * Stop the periodic TTL cleanup job (for graceful shutdown).
+ * Stop the periodic TTL cleanup job.
  */
 export function stopTtlCleanupJob(): void {
   if (intervalId) {

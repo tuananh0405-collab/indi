@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { asyncHandler } from '../utils/asyncHandler';
-import { createOrder, getOrderStatus, devConfirmOrder } from '../controllers/order.controller';
+import { createOrder, getOrderStatus } from '../controllers/order.controller';
 
 const router = Router();
 
@@ -16,11 +16,5 @@ router.post('/', asyncHandler(createOrder));
  * Returns: { success, data: { orderCode, status, ... } }
  */
 router.get('/:orderCode/status', asyncHandler(getOrderStatus));
-
-/**
- * POST /api/orders/:orderCode/dev-confirm
- * DEV ONLY — Simulates PayOS webhook to confirm payment.
- */
-router.post('/:orderCode/dev-confirm', asyncHandler(devConfirmOrder));
 
 export default router;

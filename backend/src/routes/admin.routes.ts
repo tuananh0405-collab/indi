@@ -8,6 +8,8 @@ import {
   resendEmail,
   getDashboard,
   exportExcel,
+  adminCreateOrder,
+  adminCancelOrder,
 } from '../controllers/admin.controller';
 
 const router = Router();
@@ -22,6 +24,8 @@ router.use(verifyAdminJwt);
  * POST /api/admin/tickets/:id/resend-email   — Resend ticket email (US-14)
  * GET  /api/admin/dashboard          — Dashboard stats (US-18)
  * GET  /api/admin/export             — Export Excel .xlsx (US-19)
+ * POST /api/admin/orders             — Admin create order (bypass PayOS)
+ * POST /api/admin/orders/:orderCode/cancel — Admin cancel order
  */
 router.get('/tickets', asyncHandler(listTickets));
 router.patch('/tickets/:id', asyncHandler(updateTicket));
@@ -29,5 +33,7 @@ router.patch('/tickets/:id/toggle-status', asyncHandler(toggleTicketStatus));
 router.post('/tickets/:id/resend-email', asyncHandler(resendEmail));
 router.get('/dashboard', asyncHandler(getDashboard));
 router.get('/export', asyncHandler(exportExcel));
+router.post('/orders', asyncHandler(adminCreateOrder));
+router.post('/orders/:orderCode/cancel', asyncHandler(adminCancelOrder));
 
 export default router;

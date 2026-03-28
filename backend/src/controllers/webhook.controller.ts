@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import Order from '../models/Order';
-import Ticket from '../models/Ticket';
+import { eq, and } from 'drizzle-orm';
+import { db, sqlite, orders, tickets } from '../db';
 import payos from '../services/payos.service';
 import { fulfillOrder } from '../services/fulfillment.service';
 
@@ -37,33 +37,38 @@ export async function handlePayOSWebhook(req: Request, res: Response): Promise<v
     const { orderCode } = webhookData;
     console.log(`📥 Webhook received for orderCode: ${orderCode}`);
 
-    // ── Step 2: Idempotent order update ───────────────────────
-    // Only update if status is currently PENDING.
-    // If already PAID/EXPIRED/CANCELLED, this returns null (no-op).
-    const order = await Order.findOneAndUpdate(
-      { orderCode, status: 'PENDING' },
-      { status: 'PAID', paidAt: new Date() },
-      { new: true }
-    );
+    // ── Step 2: Idempotent order update (in transaction) ──────
+    const result = sqlite.transaction(() => {
+      // Only update if status is currently PENDING
+      const updated = db.update(orders)
+        .set({ status: 'PAID', paidAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+        .where(and(eq(orders.orderCode, orderCode), eq(orders.status, 'PENDING')))
+        .returning()
+        .get();
 
-    if (!order) {
+      if (!updated) {
+        return null; // Already processed or expired — no-op
+      }
+
+      // Activate all HOLDING tickets
+      const ticketUpdate = sqlite.prepare(`
+        UPDATE tickets SET status = 'ACTIVE', updated_at = datetime('now')
+        WHERE order_id = ? AND status = 'HOLDING'
+      `).run(updated.id);
+
+      return { order: updated, ticketsActivated: ticketUpdate.changes };
+    })();
+
+    if (!result) {
       console.log(`ℹ️  Webhook for orderCode ${orderCode}: order not PENDING (already processed or expired)`);
       res.status(200).json({ success: true });
       return;
     }
 
-    // ── Step 3: Activate all HOLDING tickets ──────────────────
-    const updateResult = await Ticket.updateMany(
-      { orderId: order._id, status: 'HOLDING' },
-      { status: 'ACTIVE' }
-    );
+    console.log(`✅ Order ${orderCode} → PAID | ${result.ticketsActivated} tickets activated`);
 
-    console.log(`✅ Order ${orderCode} → PAID | ${updateResult.modifiedCount} tickets activated`);
-
-    // ── Step 4: Trigger fulfillment (async, non-blocking) ─────
-    // Generate QR codes + send emails in the background.
-    // Errors are logged internally but never block the 200 response.
-    fulfillOrder(order._id).catch((err) => {
+    // ── Step 3: Trigger fulfillment (async, non-blocking) ─────
+    fulfillOrder(result.order.id).catch((err) => {
       console.error(`❌ Fulfillment failed for order ${orderCode}:`, err);
     });
 

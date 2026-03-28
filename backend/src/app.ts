@@ -1,17 +1,25 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import config from './config';
 import { errorHandler } from './middlewares/errorHandler';
 import authRoutes from './routes/auth.routes';
 import orderRoutes from './routes/order.routes';
 import webhookRoutes from './routes/webhook.routes';
 import checkinRoutes from './routes/checkin.routes';
 import adminRoutes from './routes/admin.routes';
+import ticketTypeRoutes from './routes/ticketType.routes';
+import promoRoutes from './routes/promo.routes';
 
 const app: Application = express();
 
 // ─── Global Middleware ────────────────────────────────────────
-app.use(cors());
+app.use(helmet());
+app.use(cors({
+  origin: config.frontendUrl,
+  credentials: true,
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -49,6 +57,8 @@ app.use('/api/orders', orderLimiter, orderRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/checkin', checkinRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/ticket-types', ticketTypeRoutes);
+app.use('/api/promo', promoRoutes);
 
 // ─── 404 Handler ──────────────────────────────────────────────
 app.use((_req: Request, res: Response) => {
