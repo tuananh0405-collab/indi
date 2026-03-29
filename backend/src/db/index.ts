@@ -1,9 +1,16 @@
 import Database, { type Database as DatabaseType } from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import * as schema from './schema';
 
-const DB_PATH = path.resolve(__dirname, '../../data/indi.db');
+// Use DATABASE_PATH env var in production (Render), fallback to local path for dev
+const DB_PATH = process.env.DATABASE_PATH
+  ? path.resolve(process.env.DATABASE_PATH)
+  : path.resolve(__dirname, '../../data/indi.db');
+
+// Ensure the directory exists (critical for fresh Render deploys)
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 // Create the raw better-sqlite3 connection
 const sqlite: DatabaseType = new Database(DB_PATH);

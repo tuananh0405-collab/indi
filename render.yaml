@@ -1,0 +1,66 @@
+# Render Blueprint — INDI Ticketing System
+# https://render.com/docs/blueprint-spec
+
+services:
+  # ─── Backend (Express + SQLite) ────────────────────────
+  - type: web
+    name: indi-backend
+    runtime: node
+    region: singapore  # closest to Vietnam
+    plan: free
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "3000"
+      - key: FRONTEND_URL
+        sync: false  # set manually after frontend deploys
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_EXPIRES_IN
+        value: "24h"
+      - key: ADMIN_EMAILS
+        sync: false
+      - key: PAYOS_CLIENT_ID
+        sync: false
+      - key: PAYOS_API_KEY
+        sync: false
+      - key: PAYOS_CHECKSUM_KEY
+        sync: false
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM_NAME
+        value: INDI Event
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: TICKET_CAPACITY
+        value: "400"
+      - key: ORDER_TTL_MINUTES
+        value: "10"
+
+  # ─── Frontend (Next.js) ────────────────────────────────
+  - type: web
+    name: indi-frontend
+    runtime: node
+    region: singapore
+    plan: free
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        sync: false  # set to https://indi-backend.onrender.com/api
+      - key: NEXT_PUBLIC_GOOGLE_CLIENT_ID
+        sync: false

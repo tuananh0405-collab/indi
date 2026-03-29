@@ -16,8 +16,15 @@ const app: Application = express();
 
 // ─── Global Middleware ────────────────────────────────────────
 app.use(helmet());
+
+// Allow both production (Render) and local dev origins
+const allowedOrigins = [
+  config.frontendUrl,
+  'http://localhost:3001',
+].filter(Boolean);
+
 app.use(cors({
-  origin: config.frontendUrl,
+  origin: allowedOrigins,
   credentials: true,
 }));
 app.use(express.json());
