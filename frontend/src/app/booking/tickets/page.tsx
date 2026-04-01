@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import api from '@/lib/axios';
 import TicketSelector from '../ticket-selector';
 import BuyerInfoForm from '../buyer-info-form';
@@ -58,6 +58,54 @@ const STEPS = [
   { id: 4, number: '04', label: 'Xác nhận' },
 ];
 
+// ─── Session Storage Helpers ──────────────────────────────────
+const STORAGE_KEY = 'indi_booking_state';
+
+interface BookingSessionState {
+  step: number;
+  selectedTickets: SelectedTicket[];
+  buyerInfo: BuyerInfo;
+  promoCode: string;
+  promoDiscount: number;
+  promoApplied: boolean;
+  paymentData: PaymentData | null;
+  paymentPhase: 'selecting' | 'qr' | 'paid';
+  orderCreatedAt: string | null;
+  savedAt: number; // timestamp to check freshness
+}
+
+function saveBookingState(state: BookingSessionState) {
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // silently ignore quota errors
+  }
+}
+
+function loadBookingState(): BookingSessionState | null {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as BookingSessionState;
+    // Discard if older than 15 minutes
+    if (Date.now() - parsed.savedAt > 15 * 60 * 1000) {
+      sessionStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function clearBookingState() {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 // ─── Countdown Timer Hook ─────────────────────────────────────
 function useCountdown(startMinutes: number, active: boolean, onExpire?: () => void) {
   const [secondsLeft, setSecondsLeft] = useState(startMinutes * 60);
@@ -93,33 +141,36 @@ function useCountdown(startMinutes: number, active: boolean, onExpire?: () => vo
 }
 
 export default function BookingPage() {
-  const [step, setStep] = useState(1);
+  // ── Restore saved session state on mount ──────────────────
+  const savedState = useMemo(() => loadBookingState(), []);
+
+  const [step, setStep] = useState(savedState?.step ?? 1);
   const [ticketTypes, setTicketTypes] = useState<TicketType[]>([]);
-  const [selectedTickets, setSelectedTickets] = useState<SelectedTicket[]>([]);
-  const [buyerInfo, setBuyerInfo] = useState<BuyerInfo>({
+  const [selectedTickets, setSelectedTickets] = useState<SelectedTicket[]>(savedState?.selectedTickets ?? []);
+  const [buyerInfo, setBuyerInfo] = useState<BuyerInfo>(savedState?.buyerInfo ?? {
     buyerName: '',
     buyerLastName: '',
     buyerEmail: '',
     buyerPhone: '',
   });
   const [ticketAddresses, setTicketAddresses] = useState<TicketAddress[]>([]);
-  const [promoCode, setPromoCode] = useState('');
+  const [promoCode, setPromoCode] = useState(savedState?.promoCode ?? '');
   const [promoInput, setPromoInput] = useState('');
-  const [promoDiscount, setPromoDiscount] = useState(0);
-  const [promoApplied, setPromoApplied] = useState(false);
+  const [promoDiscount, setPromoDiscount] = useState(savedState?.promoDiscount ?? 0);
+  const [promoApplied, setPromoApplied] = useState(savedState?.promoApplied ?? false);
   const [promoLoading, setPromoLoading] = useState(false);
   const [promoError, setPromoError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(0);
-  const [timerActive, setTimerActive] = useState(false);
+  const [timerActive, setTimerActive] = useState(savedState ? savedState.step > 1 && savedState.step < 4 : false);
   const [showTimeoutModal, setShowTimeoutModal] = useState(false);
   // Payment QR state
-  const [paymentData, setPaymentData] = useState<PaymentData | null>(null);
-  const [paymentPhase, setPaymentPhase] = useState<'selecting' | 'qr' | 'paid'>('selecting');
+  const [paymentData, setPaymentData] = useState<PaymentData | null>(savedState?.paymentData ?? null);
+  const [paymentPhase, setPaymentPhase] = useState<'selecting' | 'qr' | 'paid'>(savedState?.paymentPhase ?? 'selecting');
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
-  const [orderCreatedAt, setOrderCreatedAt] = useState<string | null>(null);
+  const [orderCreatedAt, setOrderCreatedAt] = useState<string | null>(savedState?.orderCreatedAt ?? null);
 
   const handleTimeout = useCallback(() => {
     setTimerActive(false);
@@ -144,7 +195,68 @@ export default function BookingPage() {
     }
     setStep(1);
     resetTimer();
+    clearBookingState();
   }, [resetTimer]);
+
+  // ── Persist booking state to sessionStorage ────────────────
+  useEffect(() => {
+    // Don't save step 1 (nothing to recover) or step 4 (completed)
+    if (step === 1 && selectedTickets.length === 0) return;
+    if (step === 4) {
+      clearBookingState();
+      return;
+    }
+    saveBookingState({
+      step,
+      selectedTickets,
+      buyerInfo,
+      promoCode,
+      promoDiscount,
+      promoApplied,
+      paymentData,
+      paymentPhase,
+      orderCreatedAt,
+      savedAt: Date.now(),
+    });
+  }, [step, selectedTickets, buyerInfo, promoCode, promoDiscount, promoApplied, paymentData, paymentPhase, orderCreatedAt]);
+
+  // ── Recover pending payment on mount ────────────────────────
+  useEffect(() => {
+    if (!savedState) return;
+    // If we were on step 3 with QR data, verify the order is still PENDING
+    if (savedState.step === 3 && savedState.paymentPhase === 'qr' && savedState.paymentData) {
+      const orderCode = savedState.paymentData.orderCode;
+      api.get(`/orders/${orderCode}/status`)
+        .then((res) => {
+          const status = res.data.data.status;
+          if (status === 'PAID') {
+            // Already paid while we were away
+            setPaymentPhase('paid');
+            setOrderCreatedAt(res.data.data.paidAt || new Date().toISOString());
+            setStep(4);
+            setTimerActive(false);
+          } else if (status === 'EXPIRED' || status === 'CANCELLED') {
+            // Order expired, restart
+            clearBookingState();
+            setStep(1);
+            setSelectedTickets([]);
+            setPaymentData(null);
+            setPaymentPhase('selecting');
+            setTimerActive(false);
+            setError('Đơn hàng đã hết hạn. Vui lòng đặt lại.');
+          }
+          // If still PENDING, the restored state (step 3 + QR) is correct
+        })
+        .catch(() => {
+          // Can't verify — clear and restart to be safe
+          clearBookingState();
+          setStep(1);
+          setPaymentData(null);
+          setPaymentPhase('selecting');
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run once on mount
 
   // ── Fetch ticket types ─────────────────────────────────────
   useEffect(() => {
@@ -585,6 +697,9 @@ export default function BookingPage() {
                           Đang chờ thanh toán... Trạng thái sẽ tự động cập nhật
                         </p>
                       </div>
+
+                      {/* Share payment link */}
+                      <SharePaymentLink orderCode={paymentData.orderCode} />
                     </div>
                   </div>
                 </div>
@@ -1075,6 +1190,45 @@ function PaymentDetailRow({ label, value, copyable }: { label: string; value: st
             {copied ? '✓ Đã sao' : 'Sao chép'}
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Share Payment Link Component ─────────────────────────────
+function SharePaymentLink({ orderCode }: { orderCode: number }) {
+  const [copied, setCopied] = useState(false);
+
+  const paymentUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/payment/${orderCode}`
+    : '';
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(paymentUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 3000);
+    });
+  };
+
+  return (
+    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 mt-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-xs text-blue-700 min-w-0">
+          <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+          <span className="truncate">Sao chép link để thanh toán trên thiết bị khác</span>
+        </div>
+        <button
+          onClick={handleCopy}
+          className={`flex-shrink-0 px-3 py-1 rounded-md text-[11px] font-semibold transition-all duration-200 ${
+            copied
+              ? 'bg-green-500 text-white'
+              : 'bg-blue-600 text-white hover:bg-blue-700'
+          }`}
+        >
+          {copied ? '✓ Đã sao chép' : 'Sao chép link'}
+        </button>
       </div>
     </div>
   );

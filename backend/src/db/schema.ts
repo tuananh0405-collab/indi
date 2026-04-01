@@ -40,6 +40,9 @@ export const orders = sqliteTable('orders', {
   status: text('status').notNull().default('PENDING'), // PENDING | PAID | EXPIRED | CANCELLED
   paymentLink: text('payment_link').default(''),
   paymentLinkId: text('payment_link_id').default(''),
+  paymentBin: text('payment_bin').default(''),
+  paymentAccountNumber: text('payment_account_number').default(''),
+  paymentAccountName: text('payment_account_name').default(''),
   paidAt: text('paid_at'),
   notes: text('notes').default(''),
   createdBy: text('created_by').default(''),   // 'system' or admin email

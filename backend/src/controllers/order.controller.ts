@@ -302,6 +302,9 @@ export async function createOrder(req: Request, res: Response): Promise<void> {
       .set({
         paymentLink: paymentLinkResponse.checkoutUrl,
         paymentLinkId: paymentLinkResponse.paymentLinkId,
+        paymentBin: (paymentLinkResponse as any).bin || '',
+        paymentAccountNumber: (paymentLinkResponse as any).accountNumber || '',
+        paymentAccountName: (paymentLinkResponse as any).accountName || '',
       })
       .where(eq(orders.id, result.id))
       .run();
@@ -386,7 +389,12 @@ export async function getOrderStatus(req: Request, res: Response): Promise<void>
       items,
       totalQuantity: order.totalQuantity,
       totalAmount: order.totalAmount,
+      discountAmount: order.discountAmount,
       paymentLink: order.paymentLink,
+      paymentBin: order.paymentBin || '',
+      paymentAccountNumber: order.paymentAccountNumber || '',
+      paymentAccountName: order.paymentAccountName || '',
+      description: `INDI ${order.orderCode}`,
       expiresAt: expiresAt.toISOString(),
       paidAt: order.paidAt || null,
     },
